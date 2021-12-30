@@ -199,10 +199,16 @@ int main()
 	CHECK(activateCount, "No MFTs found");
 
 	// Choose the first available encoder
-	CComPtr<IMFActivate> activate = activateRaw[0];
+	CComPtr<IMFActivate> activate = activateRaw[0]; // <<---------------- Index of MFT we're picking
 
 	for (UINT32 i = 0; i < activateCount; i++)
 		activateRaw[i]->Release();
+
+	CComHeapPtr<WCHAR> friendlyName;
+	UINT32 friendlyNameLength;
+	hr = activate->GetAllocatedString(MFT_FRIENDLY_NAME_Attribute, &friendlyName, &friendlyNameLength);
+	CHECK_HR(hr, "Failed to read MFT_FRIENDLY_NAME_Attribute");
+	std::wcout << static_cast<WCHAR const*>(friendlyName) << std::endl;
 
 	// Activate
 	hr = activate->ActivateObject(IID_PPV_ARGS(&transform));
@@ -211,6 +217,9 @@ int main()
 	// Get attributes
 	hr = transform->GetAttributes(&attributes);
 	CHECK_HR(hr, "Failed to get MFT attributes");
+
+/*  NOTE: https://docs.microsoft.com/en-us/windows/win32/medfound/mft-friendly-name-attribute
+	This attribute is supported by hardware-based MFTs. It is also set on the IMFActivate pointers... (see above)
 
 	// Get encoder name
 	UINT32 nameLength = 0;
@@ -228,9 +237,10 @@ int main()
 	name.resize(nameLength);
 
 	std::wcout << name << std::endl;
+*/
 
 	// Unlock the transform for async use and get event generator
-	hr = attributes->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE);
+	hr = attributes->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE); // <<---------------- Assuming asynchronous MFT without checking (fair, others are filtered out above)
 	CHECK_HR(hr, "Failed to unlock MFT");
 
 	eventGen = transform;
@@ -252,7 +262,7 @@ int main()
 	// ------------------------------------------------------------------------
 
 	// Set D3D manager
-	hr = transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p));
+	hr = transform->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, reinterpret_cast<ULONG_PTR>(deviceManager.p)); // <<-------- Would fail if D3D11 device does not match in hardware to this MFT
 	CHECK_HR(hr, "Failed to set D3D manager");
 
 	// Set low latency hint
