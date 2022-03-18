@@ -58,6 +58,21 @@
 #include <mfreadwrite.h>
 #include <mferror.h>
 #include <Codecapi.h>
+#include <dshow.h>
+
+#include <windows.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <mfobjects.h>
+#include <ks.h>
+#include <stdio.h>
+#include <mferror.h>
+#include <propvarutil.h>
+#include <wmcodecdsp.h>
+#include <d3d9.h>
+#include <dxva2api.h>
+#include <wmcodecdsp.h>
 
 // Simplified error handling via macros
 #ifdef DEBUG
@@ -88,7 +103,11 @@ int main()
 
 	CComPtr<IMFTransform> transform;
 	CComPtr<IMFAttributes> attributes;
+	CComPtr<ICodecAPI> spCodecApi;
+	CComPtr<IMFAttributes> m_spEventGenerator;
 	CComQIPtr<IMFMediaEventGenerator> eventGen;
+	CComPtr<IMFTransform> spMFT ;
+
 	DWORD inputStreamID;
 	DWORD outputStreamID;
 
@@ -96,7 +115,8 @@ int main()
 	long long appStartTicks;
 	long long encStartTicks;
 	long long ticksPerFrame;
-
+	GUID clsid;
+	LPWSTR m_pszEncoderMFTName;
 
 	// ------------------------------------------------------------------------
 	// Initialize Media Foundation & COM
@@ -179,18 +199,23 @@ int main()
 	CComHeapPtr<IMFActivate*> activateRaw;
 	UINT32 activateCount = 0;
 
-	// h264 output
-	MFT_REGISTER_TYPE_INFO info = { MFMediaType_Video, MFVideoFormat_H264 };
 
 	UINT32 flags =
-		MFT_ENUM_FLAG_HARDWARE |
-		MFT_ENUM_FLAG_SORTANDFILTER;
+		MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SYNCMFT |
+		MFT_ENUM_FLAG_LOCALMFT | MFT_ENUM_FLAG_SORTANDFILTER;
+	flags |= MFT_ENUM_FLAG_HARDWARE;
+	MFT_REGISTER_TYPE_INFO in;
+	MFT_REGISTER_TYPE_INFO out;
+	in.guidMajorType = MFMediaType_Video;
+	in.guidSubtype = MFVideoFormat_NV12;
+	out.guidMajorType = MFMediaType_Video;
+	out.guidSubtype = MFVideoFormat_HEVC;
 
 	hr = MFTEnumEx(
 		MFT_CATEGORY_VIDEO_ENCODER,
 		flags,
 		NULL,
-		&info,
+		&out,
 		&activateRaw,
 		&activateCount
 	);
@@ -203,6 +228,33 @@ int main()
 
 	for (UINT32 i = 0; i < activateCount; i++)
 		activateRaw[i]->Release();
+	
+	hr = activate->GetGUID(MFT_TRANSFORM_CLSID_Attribute, &clsid);
+	
+	hr = MFTGetInfo(clsid, &m_pszEncoderMFTName, NULL, NULL, NULL, NULL, NULL);
+	hr = CoCreateInstance(clsid, NULL, CLSCTX_INPROC_SERVER, IID_IMFTransform, (void**)&spMFT);
+
+	hr = activate->QueryInterface(IID_IMFMediaEventGenerator, (void**)&m_spEventGenerator);
+	if (hr == E_NOINTERFACE)
+	{
+		std::wcout << "The selected MF encoder does not support async encode. Switching to sync mode." << std::endl;
+	}
+
+	static const GUID IID_ICodecAPI = {
+	0x901db4c7, 0x31ce, 0x41a2, { 0x85, 0xdc, 0x8f, 0xa0, 0xbf, 0x41, 0xb8, 0xda }
+	};
+	hr = spMFT->QueryInterface(IID_ICodecAPI, (void**)&spCodecApi);
+	CHECK_HR(hr, "QueryInterface( IID_ICodecApi ) failed");
+	VARIANT var = { 0 };
+	hr = spCodecApi->IsSupported(&CODECAPI_AVLowLatencyMode);
+	if (hr == S_OK)
+	{
+		var.vt = VT_BOOL;
+		var.boolVal = VARIANT_TRUE;
+		hr = spCodecApi->SetValue(&CODECAPI_AVLowLatencyMode, &var);
+	
+	}
+
 
 	CComHeapPtr<WCHAR> friendlyName;
 	UINT32 friendlyNameLength;
